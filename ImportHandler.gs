@@ -4,43 +4,75 @@ var ImportHandler = {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     
     // Ensure DBs exist
-    ['DB_SCHEDULE', 'DB_IDP', 'DB_FURLOUGH'].forEach(n => {
-      if(!ss.getSheetByName(n)) ss.insertSheet(n);
-    });
-    
-    // --- 1. PROCESS SCHEDULE ---
+    if(!ss.getSheetByName('DB_SCHEDULE')) ss.insertSheet('DB_SCHEDULE');
+    if(!ss.getSheetByName('DB_IDP')) ss.insertSheet('DB_IDP');
+    if(!ss.getSheetByName('DB_FURLOUGH')) {
+      let s = ss.insertSheet('DB_FURLOUGH');
+      s.appendRow(['ID', 'Agent Name', 'Date', 'Start Time', 'Type', 'WeekRotation']);
+    }
+
+    // --- 1. PROCESS SCHEDULE (HIERARCHICAL TEXT PARSING) ---
     if (schedRaw && schedRaw.trim().length > 0) {
-      const rows = parseCSV(schedRaw);
       let cleanSched = [];
-      let curAgent = "", curDate = "";
       
-      rows.forEach(row => {
-        let col0 = row[0];
-        // Agent Header Detection
-        if (col0 && col0.includes('Agent:')) {
-           let parts = col0.split(':');
-           if(parts.length > 1) curAgent = parts[1].replace(/^\d+/, '').trim(); // Remove ID
+      // Split by newline and remove empty lines
+      const lines = schedRaw.split(/\r?\n/).filter(l => l.trim().length > 0);
+      
+      let currentAgent = "";
+      let currentDate = "";
+      
+      // Regex to find "Activity StartTime EndTime" at the end of a line
+      // Matches: "Open/Ouvert 6:30 AM 8:20 AM"
+      // Captures group 1: Activity, group 2: Start, group 3: End
+      const segmentRegex = /([a-zA-ZÀ-ÿ0-9\/\(\)\s\-\.]+)[\t\s]+(\d{1,2}:\d{2}\s?[AP]M)[\t\s]+(\d{1,2}:\d{2}\s?[AP]M)\s*$/i;
+      
+      // Regex to find Date at start of line (e.g. 2/8/26)
+      const dateRegex = /^[\t\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/;
+
+      lines.forEach(line => {
+        const text = line.trim();
+        
+        // 1. Detect Agent
+        if (text.includes('Agent:')) {
+          const parts = text.split(':');
+          if (parts.length > 1) {
+            // Remove ID numbers if present (e.g. "773560 Abouda, Mohammed" -> "Abouda, Mohammed")
+            currentAgent = parts[1].replace(/^\s*\d+\s+/, '').trim();
+          }
+          return; // Skip to next line
         }
         
-        // Data Row Detection (Col 2=Date, 6=Act, 7=Start, 10=End)
-        // Adjust indices for 0-based array from CSV parser
-        if (row.length > 10) {
-          let dateVal = row[2];
-          let act = row[6];
-          let start = row[7];
-          let end = row[10];
-
-          if (act && start && end) {
-             if (dateVal && dateVal.includes('/')) curDate = parseDate(dateVal);
-             
-             if (curAgent && curDate) {
-               cleanSched.push([curAgent, curDate, act, start, end]);
-             }
+        // 2. Detect Date (Update context)
+        const dateMatch = line.match(dateRegex);
+        if (dateMatch) {
+          currentDate = parseDate(dateMatch[1]);
+        }
+        
+        // 3. Detect Activity Segments
+        // We only care if we have an agent and a date context
+        if (currentAgent && currentDate) {
+          const segMatch = line.match(segmentRegex);
+          if (segMatch) {
+            let activity = segMatch[1].trim();
+            let start = segMatch[2].trim();
+            let end = segMatch[3].trim();
+            
+            // Cleanup activity name (sometimes trailing tabs get caught)
+            // Also, your raw data sometimes has "Date Start End" before the activity.
+            // The regex matches the *last* 3 parts which is usually the segment breakdown.
+            
+            // Filter out lines that are just headers like "Date Start End"
+            if (!activity.toLowerCase().includes('scheduled activity') && 
+                !start.toLowerCase().includes('start') &&
+                !end.toLowerCase().includes('end')) {
+                  
+               cleanSched.push([currentAgent, currentDate, activity, start, end]);
+            }
           }
         }
       });
       
-      // Save to DB
+      // Save to DB_SCHEDULE
       if (cleanSched.length > 0) {
         const db = ss.getSheetByName('DB_SCHEDULE');
         db.clear();
@@ -49,34 +81,58 @@ var ImportHandler = {
       }
     }
 
-    // --- 2. PROCESS IDP ---
+    // --- 2. PROCESS IDP (COLUMN MAPPING) ---
     if (idpRaw && idpRaw.trim().length > 0) {
-      const rows = parseCSV(idpRaw);
       let cleanIDP = [];
+      const lines = idpRaw.split(/\r?\n/).filter(l => l.trim().length > 0);
       
-      // Find Header
-      let hIdx = rows.findIndex(r => r[0] && r[0].toLowerCase().includes('time'));
+      // Find header row index
+      let hIdx = lines.findIndex(l => l.toLowerCase().includes('time') && l.toLowerCase().includes('requirements'));
+      
       if (hIdx > -1) {
-        let headers = rows[hIdx];
-        let dateMap = {};
+        // Split header by tab (preferred) or multiple spaces
+        // The raw data looks tab-separated
+        let headerLine = lines[hIdx];
+        let headers = headerLine.split(/\t+/);
+        if(headers.length < 2) headers = headerLine.split(/\s{2,}/); // Fallback to spaces
         
+        let dateMap = {}; // Col Index -> Date String
+        
+        // Map columns to dates
         headers.forEach((h, i) => {
-          if (h && h.includes('Requirements')) {
-             let dStr = h.replace('Requirements', '').trim();
-             dateMap[i] = parseDateLong(dStr); // Need custom parser for "Friday, Feb..."
+          if (h.toLowerCase().includes('requirements')) {
+             // Extract "Friday, February 6, 2026"
+             let dStr = h.replace(/requirements/i, '').trim();
+             let pDate = parseDateLong(dStr);
+             if(pDate) dateMap[i] = pDate;
           }
         });
-        
-        for (let i = hIdx+1; i < rows.length; i++) {
-          let time = rows[i][0];
+
+        // Process Data Rows
+        for (let i = hIdx + 1; i < lines.length; i++) {
+          let line = lines[i];
+          let cols = line.split(/\t+/);
+          if(cols.length < 2) cols = line.split(/\s{2,}/); // Fallback
+          
+          let time = cols[0];
+          // Basic validation that first col is a time
+          if (!time || (!time.includes('AM') && !time.includes('PM'))) continue;
+
+          // For each mapped column, get the value
           Object.keys(dateMap).forEach(k => {
-            let val = rows[i][k];
-            if (val) cleanIDP.push([dateMap[k], time, val]);
+            let colIdx = parseInt(k);
+            if (cols.length > colIdx) {
+              let val = cols[colIdx];
+              // Remove empty strings or non-numbers
+              if (val && !isNaN(parseFloat(val))) {
+                 cleanIDP.push([dateMap[k], time, val]);
+              }
+            }
           });
         }
       }
       
-      // Save to DB
+      // Save to DB_IDP
       if (cleanIDP.length > 0) {
         const db = ss.getSheetByName('DB_IDP');
         db.clear();
@@ -89,34 +145,21 @@ var ImportHandler = {
   }
 };
 
-// Simple CSV Parser handling quotes
-function parseCSV(str) {
-  const arr = [];
-  let quote = false;  // 'true' means we're inside a quoted field
-  let row = 0, col = 0, c = 0;
-  for (; c < str.length; c++) {
-    let cc = str[c], nc = str[c+1];
-    arr[row] = arr[row] || []; arr[row][col] = arr[row][col] || '';
-    if (cc == '"' && quote && nc == '"') { arr[row][col] += cc; ++c; continue; }
-    if (cc == '"') { quote = !quote; continue; }
-    if (cc == ',' && !quote) { ++col; continue; }
-    if (cc == '\r' && nc == '\n' && !quote) { ++row; col = 0; ++c; continue; }
-    if (cc == '\n' && !quote) { ++row; col = 0; continue; }
-    if (cc == '\r' && !quote) { ++row; col = 0; continue; }
-    arr[row][col] += cc;
-  }
-  return arr;
-}
+// --- UTILITIES ---
 
 function parseDate(s) {
-  // 2/8/26 -> 2026-02-08
+  // Handle "2/8/26"
   if(!s) return "";
-  let p = s.split('/');
-  return `20${p[2]}-${p[0].padStart(2,'0')}-${p[1].padStart(2,'0')}`;
+  let d = new Date(s);
+  if(isNaN(d.getTime())) return "";
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
 }
 
 function parseDateLong(s) {
-  // "Friday, February 6, 2026" -> YYYY-MM-DD
+  // Handle "Friday, February 6, 2026"
+  // Remove "Open" or "Occupied" if regex grabbed too much
+  s = s.replace(/Open|Occupied|Seats|\+\/\-/g, '').trim();
   let d = new Date(s);
+  if (isNaN(d.getTime())) return null;
   return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
 }
