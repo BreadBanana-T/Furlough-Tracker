@@ -1,0 +1,143 @@
+<script>
+const app = {
+  selectedDate: '',
+  
+  init: function() {
+    const t = new Date().toISOString().split('T')[0];
+    document.getElementById('datePicker').value = t;
+  },
+
+  load: function() {
+    this.selectedDate = document.getElementById('datePicker').value;
+    if(!this.selectedDate) return alert("Select a date");
+    
+    ui.showLoader(true);
+    google.script.run
+      .withSuccessHandler(this.renderHeatmap)
+      .withFailureHandler(ui.handleError)
+      .getHeatmapData(this.selectedDate);
+  },
+
+  renderHeatmap: function(data) {
+    ui.showLoader(false);
+    const grid = document.getElementById('heatmapGrid');
+    grid.innerHTML = '';
+    
+    let maxS=0, maxR=0;
+    
+    // 1. Render Grid
+    data.grid.forEach((b, i) => {
+      // Stats
+      if(b.net > maxS) maxS = b.net;
+      if(b.net < maxR) maxR = b.net;
+
+      // DOM
+      const d = document.createElement('div');
+      let cls = 'bg-neu';
+      if(b.net > 0) cls = 'bg-pos';
+      if(b.net < 0) cls = 'bg-neg';
+      
+      d.className = `cell ${cls}`;
+      d.style.animationDelay = `${i * 10}ms`; // Staggered animation
+      d.onclick = () => app.openSlot(b.index); // Interactive Click
+      d.innerHTML = `<span class="c-time">${b.label}</span><span class="c-val">${b.net>0?'+':''}${b.net}</span>`;
+      
+      grid.appendChild(d);
+    });
+
+    // 2. Update KPI
+    document.getElementById('kpi-surplus').innerText = '+' + maxS;
+    document.getElementById('kpi-risk').innerText = maxR;
+
+    // 3. Update Log
+    const list = document.getElementById('furloughList');
+    list.innerHTML = '';
+    if (data.furloughs.length === 0) {
+      list.innerHTML = '<li class="empty">No furloughs today</li>';
+    } else {
+      data.furloughs.forEach(f => {
+        list.innerHTML += `<li><span>${f.agent}</span> <span>${f.time} (ER)</span></li>`;
+      });
+    }
+  },
+
+  openSlot: function(idx) {
+    ui.showLoader(true);
+    google.script.run
+      .withSuccessHandler(ui.showSlotModal)
+      .getBucketDetails(this.selectedDate, idx);
+  },
+  
+  submitFurlough: function(agentName, time) {
+    if(!confirm(`Grant Early Release to ${agentName} starting at ${time}?`)) return;
+    
+    ui.showLoader(true);
+    google.script.run
+      .withSuccessHandler(() => {
+        ui.closeModals();
+        app.load(); // Refresh grid to show new net counts
+      })
+      .submitFurlough(agentName, this.selectedDate, time);
+  },
+
+  runImport: function() {
+    const s = document.getElementById('txtSched').value;
+    const i = document.getElementById('txtIDP').value;
+    ui.showLoader(true);
+    
+    google.script.run
+      .withSuccessHandler(res => {
+        alert(res);
+        ui.closeModals();
+        ui.showLoader(false);
+      })
+      .withFailureHandler(ui.handleError)
+      .importRawData(s, i);
+  }
+};
+
+const ui = {
+  openImport: () => {
+    document.getElementById('overlay').style.display='block';
+    document.getElementById('modalImport').style.display='block';
+  },
+  
+  showSlotModal: (data) => {
+    ui.showLoader(false);
+    document.getElementById('slotTitle').innerText = `${data.time} - Staffing Details`;
+    
+    const tbody = document.getElementById('agentList');
+    tbody.innerHTML = '';
+    
+    data.agents.forEach(a => {
+       const tr = document.createElement('tr');
+       tr.innerHTML = `
+         <td>${a.name}</td>
+         <td>${a.activity}</td>
+         <td>${a.shiftEnd}</td>
+         <td><button class="btn-sm" onclick="app.submitFurlough('${a.name}', '${data.time}')">Early Release</button></td>
+       `;
+       tbody.appendChild(tr);
+    });
+
+    document.getElementById('overlay').style.display='block';
+    document.getElementById('modalSlot').style.display='block';
+  },
+
+  closeModals: () => {
+    document.querySelectorAll('.modal').forEach(m => m.style.display='none');
+    document.getElementById('overlay').style.display='none';
+  },
+  
+  showLoader: (vis) => {
+    document.getElementById('loader').style.display = vis ? 'flex' : 'none';
+  },
+  
+  handleError: (e) => {
+    ui.showLoader(false);
+    alert('Error: ' + e.message);
+  }
+};
+
+window.onload = app.init;
+</script>
