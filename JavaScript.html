@@ -3,13 +3,16 @@ const app = {
   selectedDate: '',
   
   init: function() {
-    const t = new Date().toISOString().split('T')[0];
-    document.getElementById('datePicker').value = t;
+    const t = new Date();
+    // Format YYYY-MM-DD local time
+    const local = new Date(t.getTime() - (t.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+    document.getElementById('datePicker').value = local;
+    app.load();
   },
 
   load: function() {
     this.selectedDate = document.getElementById('datePicker').value;
-    if(!this.selectedDate) return alert("Select a date");
+    if(!this.selectedDate) return;
     
     ui.showLoader(true);
     google.script.run
@@ -20,12 +23,16 @@ const app = {
 
   renderHeatmap: function(data) {
     ui.showLoader(false);
+    
+    // 1. Sync Rotation UI
+    if(data.rotation) document.getElementById('rotPicker').value = data.rotation;
+    
+    // 2. Render Grid
     const grid = document.getElementById('heatmapGrid');
     grid.innerHTML = '';
     
     let maxS=0, maxR=0;
     
-    // 1. Render Grid
     data.grid.forEach((b, i) => {
       // Stats
       if(b.net > maxS) maxS = b.net;
@@ -38,25 +45,28 @@ const app = {
       if(b.net < 0) cls = 'bg-neg';
       
       d.className = `cell ${cls}`;
-      d.style.animationDelay = `${i * 10}ms`; // Staggered animation
-      d.onclick = () => app.openSlot(b.index); // Interactive Click
+      d.onclick = () => app.openSlot(b.index);
       d.innerHTML = `<span class="c-time">${b.label}</span><span class="c-val">${b.net>0?'+':''}${b.net}</span>`;
       
       grid.appendChild(d);
     });
 
-    // 2. Update KPI
+    // 3. Update KPIs
     document.getElementById('kpi-surplus').innerText = '+' + maxS;
     document.getElementById('kpi-risk').innerText = maxR;
 
-    // 3. Update Log
+    // 4. Update Log
     const list = document.getElementById('furloughList');
     list.innerHTML = '';
     if (data.furloughs.length === 0) {
-      list.innerHTML = '<li class="empty">No furloughs today</li>';
+      list.innerHTML = '<li style="justify-content:center; color:#aaa;">No furloughs today</li>';
     } else {
       data.furloughs.forEach(f => {
-        list.innerHTML += `<li><span>${f.agent}</span> <span>${f.time} (ER)</span></li>`;
+        list.innerHTML += `
+          <li>
+            <span>${f.agent}</span> 
+            <span>${f.time} <span class="badge">${f.rotation}</span></span>
+          </li>`;
       });
     }
   },
@@ -73,11 +83,45 @@ const app = {
     
     ui.showLoader(true);
     google.script.run
-      .withSuccessHandler(() => {
+      .withSuccessHandler((res) => {
+        if(res !== "Success") alert(res);
         ui.closeModals();
-        app.load(); // Refresh grid to show new net counts
+        app.load(); // Refresh to show impact
       })
       .submitFurlough(agentName, this.selectedDate, time);
+  },
+
+  setRotation: function() {
+    const val = document.getElementById('rotPicker').value;
+    google.script.run.setRotation(val);
+  },
+
+  showStats: function() {
+    ui.showLoader(true);
+    google.script.run.withSuccessHandler(stats => {
+       ui.showLoader(false);
+       alert(`
+         Report Summary:
+         Total Furloughs: ${stats.total}
+         
+         By Rotation:
+         Week A: ${stats.byRot['Week A'] || 0}
+         Week B: ${stats.byRot['Week B'] || 0}
+         
+         This Week: ${stats.thisWeek}
+         This Month: ${stats.thisMonth}
+       `);
+    }).getStatsReport();
+  },
+
+  archive: function() {
+    if(!confirm("Archive data older than 30 days to Drive?")) return;
+    ui.showLoader(true);
+    google.script.run.withSuccessHandler(msg => {
+      ui.showLoader(false);
+      alert(msg);
+      app.load();
+    }).archiveOldData();
   },
 
   runImport: function() {
@@ -90,6 +134,7 @@ const app = {
         alert(res);
         ui.closeModals();
         ui.showLoader(false);
+        app.load();
       })
       .withFailureHandler(ui.handleError)
       .importRawData(s, i);
@@ -109,16 +154,20 @@ const ui = {
     const tbody = document.getElementById('agentList');
     tbody.innerHTML = '';
     
-    data.agents.forEach(a => {
-       const tr = document.createElement('tr');
-       tr.innerHTML = `
-         <td>${a.name}</td>
-         <td>${a.activity}</td>
-         <td>${a.shiftEnd}</td>
-         <td><button class="btn-sm" onclick="app.submitFurlough('${a.name}', '${data.time}')">Early Release</button></td>
-       `;
-       tbody.appendChild(tr);
-    });
+    if(data.agents.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#aaa;">No agents scheduled</td></tr>';
+    } else {
+      data.agents.forEach(a => {
+         const tr = document.createElement('tr');
+         tr.innerHTML = `
+           <td>${a.name}</td>
+           <td>${a.activity}</td>
+           <td>${a.shiftStart} - ${a.shiftEnd}</td>
+           <td><button class="btn-sm" onclick="app.submitFurlough('${a.name}', '${data.time}')">Early Release</button></td>
+         `;
+         tbody.appendChild(tr);
+      });
+    }
 
     document.getElementById('overlay').style.display='block';
     document.getElementById('modalSlot').style.display='block';
