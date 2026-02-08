@@ -11,45 +11,37 @@ var ImportHandler = {
       s.appendRow(['ID', 'Agent Name', 'Date', 'Start Time', 'Type', 'WeekRotation']);
     }
 
-    // --- 1. PROCESS SCHEDULE (HIERARCHICAL TEXT PARSING) ---
+    // --- 1. PROCESS SCHEDULE (Context & Details) ---
     if (schedRaw && schedRaw.trim().length > 0) {
       let cleanSched = [];
-      
-      // Split by newline and remove empty lines
       const lines = schedRaw.split(/\r?\n/).filter(l => l.trim().length > 0);
       
       let currentAgent = "";
       let currentDate = "";
       
-      // Regex to find "Activity StartTime EndTime" at the end of a line
-      // Matches: "Open/Ouvert 6:30 AM 8:20 AM"
-      // Captures group 1: Activity, group 2: Start, group 3: End
+      // Regex: "Activity 6:30 AM 8:00 AM"
       const segmentRegex = /([a-zA-ZÀ-ÿ0-9\/\(\)\s\-\.]+)[\t\s]+(\d{1,2}:\d{2}\s?[AP]M)[\t\s]+(\d{1,2}:\d{2}\s?[AP]M)\s*$/i;
-      
-      // Regex to find Date at start of line (e.g. 2/8/26)
       const dateRegex = /^[\t\s]*(\d{1,2}\/\d{1,2}\/\d{2,4})/;
 
       lines.forEach(line => {
         const text = line.trim();
         
-        // 1. Detect Agent
+        // Agent Header
         if (text.includes('Agent:')) {
           const parts = text.split(':');
           if (parts.length > 1) {
-            // Remove ID numbers if present (e.g. "773560 Abouda, Mohammed" -> "Abouda, Mohammed")
             currentAgent = parts[1].replace(/^\s*\d+\s+/, '').trim();
           }
-          return; // Skip to next line
+          return;
         }
         
-        // 2. Detect Date (Update context)
+        // Date Header
         const dateMatch = line.match(dateRegex);
         if (dateMatch) {
           currentDate = parseDate(dateMatch[1]);
         }
         
-        // 3. Detect Activity Segments
-        // We only care if we have an agent and a date context
+        // Activity Rows
         if (currentAgent && currentDate) {
           const segMatch = line.match(segmentRegex);
           if (segMatch) {
@@ -57,22 +49,16 @@ var ImportHandler = {
             let start = segMatch[2].trim();
             let end = segMatch[3].trim();
             
-            // Cleanup activity name (sometimes trailing tabs get caught)
-            // Also, your raw data sometimes has "Date Start End" before the activity.
-            // The regex matches the *last* 3 parts which is usually the segment breakdown.
-            
-            // Filter out lines that are just headers like "Date Start End"
+            // Filter garbage headers
             if (!activity.toLowerCase().includes('scheduled activity') && 
-                !start.toLowerCase().includes('start') &&
-                !end.toLowerCase().includes('end')) {
-                  
+                !start.toLowerCase().includes('start')) {
                cleanSched.push([currentAgent, currentDate, activity, start, end]);
             }
           }
         }
       });
       
-      // Save to DB_SCHEDULE
+      // Save Schedule
       if (cleanSched.length > 0) {
         const db = ss.getSheetByName('DB_SCHEDULE');
         db.clear();
@@ -81,63 +67,82 @@ var ImportHandler = {
       }
     }
 
-    // --- 2. PROCESS IDP (COLUMN MAPPING) ---
+    // --- 2. PROCESS IDP (Demand AND Supply) ---
     if (idpRaw && idpRaw.trim().length > 0) {
-      let cleanIDP = [];
+      let cleanIDP = []; // [Date, Time, Req, Open]
+      
       const lines = idpRaw.split(/\r?\n/).filter(l => l.trim().length > 0);
       
-      // Find header row index
+      // Find header row (Requirements... Open...)
       let hIdx = lines.findIndex(l => l.toLowerCase().includes('time') && l.toLowerCase().includes('requirements'));
       
       if (hIdx > -1) {
-        // Split header by tab (preferred) or multiple spaces
-        // The raw data looks tab-separated
         let headerLine = lines[hIdx];
+        // Split by tabs or multiple spaces
         let headers = headerLine.split(/\t+/);
-        if(headers.length < 2) headers = headerLine.split(/\s{2,}/); // Fallback to spaces
+        if(headers.length < 2) headers = headerLine.split(/\s{2,}/);
         
-        let dateMap = {}; // Col Index -> Date String
+        // Map columns: index -> {date: "YYYY-MM-DD", type: "req"|"open"}
+        let colMap = {}; 
         
-        // Map columns to dates
         headers.forEach((h, i) => {
-          if (h.toLowerCase().includes('requirements')) {
-             // Extract "Friday, February 6, 2026"
+          let lower = h.toLowerCase();
+          
+          // Parse "Requirements Friday, Feb..."
+          if (lower.includes('requirements')) {
              let dStr = h.replace(/requirements/i, '').trim();
              let pDate = parseDateLong(dStr);
-             if(pDate) dateMap[i] = pDate;
+             if(pDate) colMap[i] = { date: pDate, type: 'req' };
+          }
+          // Parse "Open Friday, Feb..." (Exclude "Open +/-")
+          else if (lower.includes('open') && !lower.includes('+') && !lower.includes('-') && !lower.includes('difference')) {
+             let dStr = h.replace(/open/i, '').trim();
+             let pDate = parseDateLong(dStr);
+             if(pDate) colMap[i] = { date: pDate, type: 'open' };
           }
         });
 
-        // Process Data Rows
+        // Parse Data Rows
+        // We need to aggregate by Date+Time because Req and Open might be in different columns
+        let tempMap = {}; // "Date|Time" -> {req:0, open:0}
+
         for (let i = hIdx + 1; i < lines.length; i++) {
           let line = lines[i];
           let cols = line.split(/\t+/);
-          if(cols.length < 2) cols = line.split(/\s{2,}/); // Fallback
+          if(cols.length < 2) cols = line.split(/\s{2,}/); 
           
           let time = cols[0];
-          // Basic validation that first col is a time
           if (!time || (!time.includes('AM') && !time.includes('PM'))) continue;
 
-          // For each mapped column, get the value
-          Object.keys(dateMap).forEach(k => {
+          Object.keys(colMap).forEach(k => {
             let colIdx = parseInt(k);
             if (cols.length > colIdx) {
-              let val = cols[colIdx];
-              // Remove empty strings or non-numbers
-              if (val && !isNaN(parseFloat(val))) {
-                 cleanIDP.push([dateMap[k], time, val]);
-              }
+              let val = parseFloat(cols[colIdx]);
+              if (isNaN(val)) val = 0;
+              
+              let info = colMap[colIdx];
+              let key = info.date + "|" + time;
+              
+              if (!tempMap[key]) tempMap[key] = { date: info.date, time: time, req: 0, open: 0 };
+              
+              if (info.type === 'req') tempMap[key].req = val;
+              if (info.type === 'open') tempMap[key].open = val;
             }
           });
         }
+        
+        // Convert map to array
+        Object.values(tempMap).forEach(o => {
+          cleanIDP.push([o.date, o.time, o.req, o.open]);
+        });
       }
       
-      // Save to DB_IDP
+      // Save IDP
       if (cleanIDP.length > 0) {
         const db = ss.getSheetByName('DB_IDP');
         db.clear();
-        db.appendRow(['Date', 'Interval', 'Required']);
-        db.getRange(2,1,cleanIDP.length,3).setValues(cleanIDP);
+        db.appendRow(['Date', 'Interval', 'Required', 'Open']); // Added 'Open' column
+        db.getRange(2,1,cleanIDP.length,4).setValues(cleanIDP);
       }
     }
 
@@ -145,21 +150,15 @@ var ImportHandler = {
   }
 };
 
-// --- UTILITIES ---
-
+// Utils
 function parseDate(s) {
-  // Handle "2/8/26"
   if(!s) return "";
   let d = new Date(s);
-  if(isNaN(d.getTime())) return "";
-  return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  return isNaN(d.getTime()) ? "" : Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
 }
-
 function parseDateLong(s) {
-  // Handle "Friday, February 6, 2026"
-  // Remove "Open" or "Occupied" if regex grabbed too much
-  s = s.replace(/Open|Occupied|Seats|\+\/\-/g, '').trim();
+  // Clean string from extra words if regex matched loosely
+  s = s.replace(/Requirements|Open|Occupied|Seats|\+\/\-/gi, '').trim();
   let d = new Date(s);
-  if (isNaN(d.getTime())) return null;
-  return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  return isNaN(d.getTime()) ? null : Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
 }
