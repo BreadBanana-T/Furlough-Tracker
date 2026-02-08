@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <?!= include('Style'); ?>
+</head>
+<body>
+
+<div class="app">
+  <header>
+    <div class="brand">
+      <h1>WFM Command Center</h1>
+    </div>
+    <div class="actions">
+      <button class="btn-sec" onclick="ui.openImport()">📂 Feed Data</button>
+      <input type="date" id="datePicker">
+      <button class="btn-pri" onclick="app.load()">Refresh Heatmap</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="card heatmap-section">
+      <div class="card-head">
+        <h2>Intraday Net Staffing</h2>
+        <div class="legend">
+          <span class="dot pos"></span> Surplus (Click to Furlough)
+          <span class="dot neg"></span> Risk
+        </div>
+      </div>
+      <div id="heatmapGrid" class="grid"></div>
+    </section>
+
+    <aside class="sidebar">
+      <div class="card kpi-box">
+        <h3>Furlough Opportunity</h3>
+        <div class="kpi-val pos" id="kpi-surplus">--</div>
+        <small>Max Surplus Count</small>
+      </div>
+      
+      <div class="card kpi-box">
+        <h3>Staffing Risk</h3>
+        <div class="kpi-val neg" id="kpi-risk">--</div>
+        <small>Max Deficit Count</small>
+      </div>
+
+      <div class="card log-box">
+        <h3>Furlough Tracker</h3>
+        <ul id="furloughList">
+          <li class="empty">No furloughs today</li>
+        </ul>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<div id="modalImport" class="modal">
+  <div class="modal-content">
+    <h2>Feed Data</h2>
+    <p>Copy and paste the raw content from your Excel files (Ctrl+A, Ctrl+C).</p>
+    
+    <label>Paste "Schedule" File Content:</label>
+    <textarea id="txtSched" placeholder="Paste report (23).csv content here..."></textarea>
+    
+    <label>Paste "IDP" File Content:</label>
+    <textarea id="txtIDP" placeholder="Paste IDP.csv content here..."></textarea>
+    
+    <div class="modal-actions">
+      <button onclick="ui.closeModals()">Cancel</button>
+      <button class="btn-pri" onclick="app.runImport()">Process Data</button>
+    </div>
+  </div>
+</div>
+
+<div id="modalSlot" class="modal">
+  <div class="modal-content large">
+    <div class="modal-header">
+      <h2 id="slotTitle">08:00 Details</h2>
+      <button class="close" onclick="ui.closeModals()">×</button>
+    </div>
+    <div class="slot-list-wrapper">
+      <table class="agent-table">
+        <thead><tr><th>Agent</th><th>Activity</th><th>Shift</th><th>Action</th></tr></thead>
+        <tbody id="agentList"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div id="overlay" class="overlay" onclick="ui.closeModals()"></div>
+<div id="loader" class="loader-overlay"><div class="spinner"></div>Processing...</div>
+
+<?!= include('JavaScript'); ?>
+</body>
+</html>
