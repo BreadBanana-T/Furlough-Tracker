@@ -12,9 +12,17 @@
       <h1>WFM Command Center</h1>
     </div>
     <div class="actions">
-      <button class="btn-sec" onclick="ui.openImport()">📂 Feed Data</button>
-      <input type="date" id="datePicker">
-      <button class="btn-pri" onclick="app.load()">Refresh Heatmap</button>
+      <select id="rotPicker" onchange="app.setRotation()">
+        <option value="Week A">Week A</option>
+        <option value="Week B">Week B</option>
+      </select>
+      
+      <div style="width:1px; height:20px; background:rgba(255,255,255,0.2); margin:0 5px;"></div>
+      
+      <button class="btn-sec" onclick="ui.openImport()">Feed Data</button>
+      <button class="btn-sec" onclick="app.showStats()">Reports</button>
+      <input type="date" id="datePicker" onchange="app.load()">
+      <button class="btn-pri" onclick="app.load()">Refresh</button>
     </div>
   </header>
 
@@ -23,30 +31,33 @@
       <div class="card-head">
         <h2>Intraday Net Staffing</h2>
         <div class="legend">
-          <span class="dot pos"></span> Surplus (Click to Furlough)
+          <span class="dot pos"></span> Surplus
           <span class="dot neg"></span> Risk
         </div>
       </div>
-      <div id="heatmapGrid" class="grid"></div>
+      <div id="heatmapGrid" class="grid">
+        </div>
     </section>
 
     <aside class="sidebar">
-      <div class="card kpi-box">
-        <h3>Furlough Opportunity</h3>
-        <div class="kpi-val pos" id="kpi-surplus">--</div>
-        <small>Max Surplus Count</small>
-      </div>
-      
-      <div class="card kpi-box">
-        <h3>Staffing Risk</h3>
-        <div class="kpi-val neg" id="kpi-risk">--</div>
-        <small>Max Deficit Count</small>
+      <div class="kpi-row">
+        <div class="card kpi-box">
+          <div class="kpi-val pos" id="kpi-surplus">--</div>
+          <small>Max Surplus</small>
+        </div>
+        <div class="card kpi-box">
+          <div class="kpi-val neg" id="kpi-risk">--</div>
+          <small>Max Risk</small>
+        </div>
       </div>
 
       <div class="card log-box">
-        <h3>Furlough Tracker</h3>
-        <ul id="furloughList">
-          <li class="empty">No furloughs today</li>
+        <div class="card-head">
+           <h3>Furlough Log</h3>
+           <button class="btn-sm" style="background:transparent; border:1px solid #ffffff30; color:white;" onclick="app.archive()">Archive</button>
+        </div>
+        <ul id="furloughList" class="log-list">
+          <li style="justify-content:center; color:#ffffff50;">Loading...</li>
         </ul>
       </div>
     </aside>
@@ -56,38 +67,36 @@
 <div id="modalImport" class="modal">
   <div class="modal-content">
     <h2>Feed Data</h2>
-    <p>Copy and paste the raw content from your Excel files (Ctrl+A, Ctrl+C).</p>
+    <p style="font-size:0.9rem; color:#aaa;">Paste content from your CSV exports.</p>
     
-    <label>Paste "Schedule" File Content:</label>
-    <textarea id="txtSched" placeholder="Paste report (23).csv content here..."></textarea>
+    <label>Schedule Data:</label>
+    <textarea id="txtSched" placeholder="Paste Schedule CSV..."></textarea>
     
-    <label>Paste "IDP" File Content:</label>
-    <textarea id="txtIDP" placeholder="Paste IDP.csv content here..."></textarea>
+    <label style="margin-top:10px; display:block;">IDP/Requirements Data:</label>
+    <textarea id="txtIDP" placeholder="Paste IDP CSV..."></textarea>
     
-    <div class="modal-actions">
+    <div style="margin-top:20px; text-align:right;">
       <button onclick="ui.closeModals()">Cancel</button>
-      <button class="btn-pri" onclick="app.runImport()">Process Data</button>
+      <button class="btn-pri" onclick="app.runImport()">Process</button>
     </div>
   </div>
 </div>
 
-<div id="modalSlot" class="modal">
-  <div class="modal-content large">
-    <div class="modal-header">
-      <h2 id="slotTitle">08:00 Details</h2>
-      <button class="close" onclick="ui.closeModals()">×</button>
-    </div>
-    <div class="slot-list-wrapper">
-      <table class="agent-table">
-        <thead><tr><th>Agent</th><th>Activity</th><th>Shift</th><th>Action</th></tr></thead>
-        <tbody id="agentList"></tbody>
-      </table>
-    </div>
+<div id="modalSlot" class="modal" style="width: 600px;">
+  <div style="display:flex; justify-content:space-between; margin-bottom:15px;">
+    <h2 id="slotTitle">Details</h2>
+    <button onclick="ui.closeModals()" style="background:none; border:none; color:white; font-size:1.5rem;">&times;</button>
+  </div>
+  <div style="max-height:400px; overflow-y:auto;">
+    <table class="agent-table">
+      <thead><tr><th>Agent</th><th>Activity</th><th>Shift</th><th>Action</th></tr></thead>
+      <tbody id="agentList"></tbody>
+    </table>
   </div>
 </div>
 
 <div id="overlay" class="overlay" onclick="ui.closeModals()"></div>
-<div id="loader" class="loader-overlay"><div class="spinner"></div>Processing...</div>
+<div id="loader" class="loader"><div class="spinner"></div><span>Processing...</span></div>
 
 <?!= include('JavaScript'); ?>
 </body>
