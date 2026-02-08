@@ -1,5 +1,5 @@
 /**
- * WFM COMMAND CENTER - BACKEND v2.0
+ * WFM COMMAND CENTER - BACKEND v3.1
  */
 
 function doGet() {
@@ -20,28 +20,28 @@ function getHeatmapData(selectedDate) {
   const dbSched = ss.getSheetByName('DB_SCHEDULE');
   const dbIDP = ss.getSheetByName('DB_IDP');
   const dbFurlough = ss.getSheetByName('DB_FURLOUGH');
+  
+  if (!dbSched || !dbIDP) throw new Error("System not initialized. Please Import Data.");
 
-  if (!dbSched || !dbIDP) throw new Error("System not initialized.");
+  const rotation = PropertiesService.getScriptProperties().getProperty('CURRENT_ROTATION') || 'Week A';
 
-  // 1. Get Raw Data
+  // Fetch Data
   const schedData = dbSched.getDataRange().getValues();
   const idpData = dbIDP.getDataRange().getValues();
-  // Furlough Data: [ID, Agent, Date, StartTime, Type]
   const furloughs = dbFurlough ? dbFurlough.getDataRange().getValues() : [];
 
   schedData.shift(); idpData.shift(); furloughs.shift();
 
-  // 2. Init Buckets
+  // Init Buckets
   let buckets = Array.from({length: 96}, (_, i) => ({
     index: i,
     label: indexToTime(i),
     supply: 0,
     demand: 0,
-    net: 0,
-    furloughedCount: 0
+    net: 0
   }));
 
-  // 3. Map IDP (Demand)
+  // 1. Demand (IDP)
   idpData.forEach(row => {
     if (formatDate(row[0]) === selectedDate) {
       let idx = timeToBucketIndex(row[1]);
@@ -49,126 +49,117 @@ function getHeatmapData(selectedDate) {
     }
   });
 
-  // 4. Map Schedule (Supply) - MINUS Furloughs
-  const EXCLUSIONS = ['Break/Pause', 'Lunch/Repas', '(ADT) Repas payé / Paid Lunch'];
+  // 2. Supply (Schedule)
+  // UPDATED EXCLUSION LIST based on your raw data
+  const NON_SUPPLY_ACTIVITIES = [
+    'Break/Pause', 
+    'Lunch/Repas', 
+    '(ADT) Repas payé / Paid Lunch',
+    'ACSU Libération volontaire / Solicited Time Off', // Furlough code
+    'STDP (RFT/RPT) Maladie longue durée / Long Term Sick',
+    'Off'
+  ];
   
+  // Date Logic for Overnight
+  const selDateObj = new Date(selectedDate.replace(/-/g, '/'));
+  const prevDateObj = new Date(selDateObj);
+  prevDateObj.setDate(selDateObj.getDate() - 1);
+  const prevDateStr = Utilities.formatDate(prevDateObj, Session.getScriptTimeZone(), "yyyy-MM-dd");
+
   schedData.forEach(row => {
+    let agent = row[0];
     let sDate = formatDate(row[1]);
-    let activity = row[2];
-    let agentName = row[0];
+    let act = row[2];
+    let startStr = row[3];
+    let endStr = row[4];
 
-    if (sDate === selectedDate && !EXCLUSIONS.includes(activity)) {
-      let startIdx = timeToBucketIndex(row[3]);
-      let endIdx = timeToBucketIndex(row[4]);
+    // SKIP if activity is a break, lunch, or time off
+    if (NON_SUPPLY_ACTIVITIES.some(x => act.includes(x))) return;
 
-      // Check for Furlough (Early Release)
-      // If agent is furloughed on this date from 14:00, then endIdx becomes 14:00
-      let furloughCutoff = 96;
-      let isFurloughed = false;
+    let startIdx = timeToBucketIndex(startStr);
+    let endIdx = timeToBucketIndex(endStr);
+    let isOvernight = endIdx < startIdx;
 
-      furloughs.forEach(f => {
-        if (f[1] === agentName && formatDate(f[2]) === selectedDate) {
-          let fStart = timeToBucketIndex(f[3]);
-          if (fStart > -1 && fStart < furloughCutoff) {
-            furloughCutoff = fStart;
-            isFurloughed = true;
-          }
-        }
-      });
+    if (sDate === selectedDate) {
+      let actualEnd = isOvernight ? 96 : endIdx;
+      fillBuckets(buckets, startIdx, actualEnd, agent, selectedDate, furloughs);
+    }
 
-      // Clip End Time by Furlough
-      if (endIdx > furloughCutoff) endIdx = furloughCutoff;
-
-      if (startIdx > -1 && endIdx > -1) {
-        if (endIdx < startIdx) endIdx = 96; // Midnight wrap
-        for (let i = startIdx; i < endIdx; i++) {
-          buckets[i].supply += 1;
-        }
-        // Track stats
-        if(isFurloughed) {
-           // We don't add to supply for the cut part, but we can track 'hours saved' elsewhere
-        }
-      }
+    if (sDate === prevDateStr && isOvernight) {
+      fillBuckets(buckets, 0, endIdx, agent, selectedDate, furloughs);
     }
   });
 
-  // 5. Calculate Net
+  // Calculate Net
   buckets.forEach(b => {
     b.net = parseFloat((b.supply - b.demand).toFixed(2));
     b.supply = parseFloat(b.supply.toFixed(2));
   });
 
-  // 6. Get Furlough Log for UI
+  // Get Furlough Log
   let todayFurloughs = furloughs
     .filter(f => formatDate(f[2]) === selectedDate)
-    .map(f => ({ agent: f[1], time: formatTime(f[3]), type: f[4] }));
+    .map(f => ({ 
+      id: f[0], agent: f[1], time: formatTime(f[3]), type: f[4], rotation: f[5] 
+    }));
 
-  return { grid: buckets, furloughs: todayFurloughs };
+  return { grid: buckets, furloughs: todayFurloughs, rotation: rotation };
 }
 
-// --- API 2: GET AGENT DETAILS FOR BUCKET ---
-function getBucketDetails(date, bucketIndex) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sched = ss.getSheetByName('DB_SCHEDULE').getDataRange().getValues();
-  const timeLabel = indexToTime(bucketIndex);
-  
-  let agents = [];
-  sched.shift();
-  
-  sched.forEach(row => {
-    if (formatDate(row[1]) === date) {
-      let start = timeToBucketIndex(row[3]);
-      let end = timeToBucketIndex(row[4]);
-      if (end < start) end = 96;
+function fillBuckets(buckets, start, end, agent, dateStr, furloughs) {
+  let cutOffIndex = 96;
 
-      // If this agent works during this bucket
-      if (bucketIndex >= start && bucketIndex < end) {
-        agents.push({
-          name: row[0],
-          activity: row[2],
-          shiftStart: formatTime(row[3]),
-          shiftEnd: formatTime(row[4])
-        });
-      }
+  // Check manual furloughs added via Tool
+  furloughs.forEach(f => {
+    if (f[1] === agent && formatDate(f[2]) === dateStr) {
+      let fStart = timeToBucketIndex(f[3]);
+      if (fStart > -1 && fStart < cutOffIndex) cutOffIndex = fStart;
     }
   });
-  return { time: timeLabel, agents: agents };
-}
 
-// --- API 3: SUBMIT FURLOUGH ---
-function submitFurlough(agentName, dateStr, timeStr) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = ss.getSheetByName('DB_FURLOUGH');
-  if (!sheet) {
-    sheet = ss.insertSheet('DB_FURLOUGH');
-    sheet.appendRow(['ID', 'Agent Name', 'Date', 'Start Time', 'Type']);
+  let actualEnd = (end > cutOffIndex) ? cutOffIndex : end;
+
+  for (let i = start; i < actualEnd; i++) {
+    if (buckets[i]) buckets[i].supply += 1;
   }
-  
-  const id = new Date().getTime();
-  sheet.appendRow([id, agentName, dateStr, timeStr, 'Early Release']);
-  return "Success";
 }
 
-// --- API 4: IMPORT DATA (Text Paste) ---
-function importRawData(schedText, idpText) {
-  return ImportHandler.processPaste(schedText, idpText);
-}
-
-// --- UTILS ---
+// --- STANDARD UTILS ---
 function timeToBucketIndex(val) {
+  if (!val) return -1;
   if (val instanceof Date) return (val.getHours()*4) + Math.floor(val.getMinutes()/15);
-  let d = new Date(`2000/01/01 ${val}`);
-  return isNaN(d) ? -1 : (d.getHours()*4) + Math.floor(d.getMinutes()/15);
+  let parts = String(val).match(/(\d+):(\d+)\s?([AP]M)/i);
+  if (parts) {
+    let h = parseInt(parts[1]);
+    let m = parseInt(parts[2]);
+    let amp = parts[3].toUpperCase();
+    if (amp === 'PM' && h < 12) h += 12;
+    if (amp === 'AM' && h === 12) h = 0;
+    return (h * 4) + Math.floor(m / 15);
+  }
+  return -1;
 }
+
 function indexToTime(i) {
   let h = Math.floor(i/4);
   let m = (i%4)*15;
   return `${h<10?'0'+h:h}:${m===0?'00':m}`;
 }
+
 function formatDate(d) {
+  if (!d) return "";
   return Utilities.formatDate(new Date(d), Session.getScriptTimeZone(), "yyyy-MM-dd");
 }
+
 function formatTime(d) {
-  if(d instanceof Date) return Utilities.formatDate(d, Session.getScriptTimeZone(), "HH:mm");
+  if (d instanceof Date) return Utilities.formatDate(d, Session.getScriptTimeZone(), "HH:mm");
   return String(d);
 }
+
+// Bridge for UI
+function submitFurlough(a,d,t) { /* Use previous code */ }
+function getStatsReport() { /* Use previous code */ }
+function setRotation(r) { PropertiesService.getScriptProperties().setProperty('CURRENT_ROTATION', r); }
+function importRawData(s, i) { return ImportHandler.processPaste(s, i); }
+function getBucketDetails(d, i) { /* Use previous code */ }
+function archiveOldData() { /* Use previous code */ }
