@@ -1,0 +1,79 @@
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+
+:root {
+  --bg: #f3f4f6; --card: #fff;
+  --pri: #2563eb; --pri-hov: #1d4ed8;
+  --pos: #d1fae5; --pos-t: #065f46;
+  --neg: #fee2e2; --neg-t: #991b1b;
+  --neu: #f9fafb; --border: #e5e7eb;
+}
+
+body { margin:0; font-family:'Inter',sans-serif; background:var(--bg); color:#1f2937; height:100vh; overflow:hidden; }
+.app { display:flex; flex-direction:column; height:100%; }
+
+/* Header */
+header { background:var(--card); padding:15px 25px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+header h1 { margin:0; font-size:1.2rem; font-weight:700; }
+.actions { display:flex; gap:10px; }
+button { padding:8px 16px; border-radius:6px; font-weight:600; cursor:pointer; border:1px solid var(--border); background:white; transition:0.2s; }
+.btn-pri { background:var(--pri); color:white; border:none; } .btn-pri:hover { background:var(--pri-hov); }
+.btn-sec { background:#f8fafc; } .btn-sec:hover { background:#e2e8f0; }
+
+/* Layout */
+main { display:flex; flex:1; padding:20px; gap:20px; overflow:hidden; }
+.card { background:var(--card); border-radius:12px; border:1px solid var(--border); box-shadow:0 1px 3px rgba(0,0,0,0.05); display:flex; flex-direction:column; }
+.heatmap-section { flex:1; padding:20px; overflow:hidden; }
+.sidebar { width:300px; display:flex; flex-direction:column; gap:20px; }
+
+/* Heatmap Grid */
+.card-head { display:flex; justify-content:space-between; margin-bottom:15px; }
+.grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(60px, 1fr)); gap:6px; overflow-y:auto; padding-right:5px; flex:1; }
+
+/* Animated Cell */
+.cell { 
+  padding:8px 4px; text-align:center; border-radius:6px; cursor:pointer; 
+  animation: popIn 0.3s ease-out backwards; border:1px solid transparent;
+}
+.cell:hover { transform:scale(1.1); box-shadow:0 4px 10px rgba(0,0,0,0.1); z-index:10; border-color:var(--pri); }
+.c-time { font-size:0.7rem; color:#6b7280; display:block; }
+.c-val { font-weight:700; font-size:1.1rem; }
+
+.bg-pos { background:var(--pos); color:var(--pos-t); }
+.bg-neg { background:var(--neg); color:var(--neg-t); }
+.bg-neu { background:var(--neu); color:#9ca3af; }
+
+@keyframes popIn { from { opacity:0; transform:scale(0.5); } to { opacity:1; transform:scale(1); } }
+
+/* Sidebar items */
+.kpi-box { padding:20px; text-align:center; flex:0 0 auto; }
+.kpi-val { font-size:2rem; font-weight:700; }
+.pos { color:var(--pos-t); } .neg { color:var(--neg-t); }
+
+.log-box { flex:1; padding:20px; overflow-y:auto; }
+#furloughList { list-style:none; padding:0; margin:0; }
+#furloughList li { font-size:0.85rem; padding:8px 0; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; }
+.empty { color:#9ca3af; font-style:italic; }
+
+/* Modals */
+.overlay { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.4); display:none; z-index:50; }
+.modal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:white; padding:0; border-radius:12px; z-index:60; display:none; box-shadow:0 10px 25px rgba(0,0,0,0.2); }
+.modal-content { padding:25px; width:400px; }
+.modal-content.large { width:600px; }
+
+textarea { width:100%; height:100px; margin-bottom:15px; border:1px solid var(--border); border-radius:6px; font-family:monospace; font-size:0.8rem; }
+.modal-actions { display:flex; justify-content:flex-end; gap:10px; }
+
+/* Agent Table in Modal */
+.agent-table { width:100%; border-collapse:collapse; font-size:0.9rem; }
+.agent-table th { text-align:left; padding:8px; border-bottom:2px solid var(--border); }
+.agent-table td { padding:8px; border-bottom:1px solid var(--border); }
+.btn-sm { padding:4px 8px; font-size:0.75rem; background:#fee2e2; color:#991b1b; border:none; } 
+.btn-sm:hover { background:#fca5a5; }
+
+/* Loader */
+.loader-overlay { position:fixed; top:0; left:0; width:100%; height:100%; background:white; z-index:100; display:none; flex-direction:column; justify-content:center; align-items:center; }
+.spinner { width:40px; height:40px; border:4px solid #f3f3f3; border-top:4px solid var(--pri); border-radius:50%; animation:spin 1s linear infinite; margin-bottom:10px; }
+@keyframes spin { 0% { transform:rotate(0deg); } 100% { transform:rotate(360deg); } }
+
+</style>
