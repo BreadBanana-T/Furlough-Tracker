@@ -1,12 +1,12 @@
 /**
- * WFM COMMAND CENTER - BACKEND v7.0
- * Fixes: Logic Thresholds, Name Trimming, Segment Summing
+ * WFM COMMAND CENTER - BACKEND v9.0
+ * Verified for: Stacked IDP Headers, Strict Date Matching, Supply/Demand Logic
  */
 
 function doGet() {
   return HtmlService.createTemplateFromFile('Index')
     .evaluate()
-    .setTitle('WFM Command Center')
+    .setTitle('Furlough Tracker')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
@@ -15,30 +15,30 @@ function include(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
 }
 
-// --- API 1: GET HEATMAP & STATS ---
+// --- API: GET HEATMAP ---
 function getHeatmapData(selectedDate) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const dbIDP = ss.getSheetByName('DB_IDP');
   const dbSched = ss.getSheetByName('DB_SCHEDULE');
   const dbFurlough = ss.getSheetByName('DB_FURLOUGH');
-  
-  if (!dbIDP || !dbSched) throw new Error("Data missing. Please import IDP & Schedule.");
 
+  if (!dbIDP || !dbSched) throw new Error("Database missing. Please click 'Feed Data' to import.");
+
+  // Get Rotation (Week A/B)
   const rotation = PropertiesService.getScriptProperties().getProperty('CURRENT_ROTATION') || 'Week A';
+  
+  // Normalize User Date (YYYY-MM-DD)
+  const selDateStr = selectedDate; 
 
-  // 1. Get Day Name (e.g., "Friday")
-  const selDateObj = new Date(selectedDate.replace(/-/g, '/'));
-  const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-  const dayName = days[selDateObj.getDay()];
-
-  // 2. Fetch Data
+  // Fetch Data
   const idpData = dbIDP.getDataRange().getValues();
   const schedData = dbSched.getDataRange().getValues();
   const furloughs = dbFurlough ? dbFurlough.getDataRange().getValues() : [];
 
+  // Remove Headers
   idpData.shift(); schedData.shift(); furloughs.shift();
 
-  // 3. Init Buckets
+  // Init 96 Buckets (15 min intervals)
   let buckets = Array.from({length: 96}, (_, i) => ({
     index: i,
     label: indexToTime(i),
@@ -47,30 +47,31 @@ function getHeatmapData(selectedDate) {
     net: 0
   }));
 
-  // 4. Map IDP (Demand & Supply Base)
+  // --- 1. MAP IDP (Supply & Demand) ---
   idpData.forEach(row => {
-    if (row[0] === dayName) { 
+    // Row: [Date, Interval, Required, Open/Supply]
+    let rowDate = formatDate(row[0]); 
+    
+    // Strict Match: Database Date vs Selected Date
+    if (rowDate === selDateStr) { 
       let idx = timeToBucketIndex(row[1]);
       if (idx > -1) {
-        buckets[idx].demand += Number(row[2] || 0);
-        buckets[idx].supply += Number(row[3] || 0);
+        buckets[idx].demand += Number(row[2] || 0); // "Requirements"
+        buckets[idx].supply += Number(row[3] || 0); // "Open" (treated as Staffed/Supply)
       }
     }
   });
 
-  // 5. Map Furloughs
+  // --- 2. MAP FURLOUGHS (Subtract from Supply) ---
   let furloughMap = {}; 
   furloughs.forEach(row => {
     let fDate = formatDate(row[2]);
-    if (fDate === selectedDate) {
-      let agent = String(row[1]).trim(); // TRIM FIX
+    if (fDate === selDateStr) {
+      let agent = String(row[1]).trim();
       let fStart = timeToBucketIndex(row[3]);
-      // If EndTime is missing or invalid, assume end of day (96)
+      // Handle missing End Time or Wrap
       let fEnd = (row.length > 6 && row[6]) ? timeToBucketIndex(row[6]) : 96;
-      if (fEnd === -1) fEnd = 96;
-      
-      // Handle Overnight Furlough Entry (e.g. 23:00 to 01:00) on current day view
-      if (fEnd < fStart) fEnd = 96; 
+      if (fEnd === -1 || fEnd < fStart) fEnd = 96;
 
       if (fStart > -1) {
         if (!furloughMap[agent]) furloughMap[agent] = [];
@@ -87,73 +88,58 @@ function getHeatmapData(selectedDate) {
     }
   });
 
-  // 6. Iterate Schedule (Supply Adjustment)
+  // --- 3. CALCULATE SAVINGS (Schedule Overlap) ---
   const EXCLUSIONS = ['Break', 'Lunch', 'Off', 'Solicited', 'Sick', 'Maladie'];
   
-  const prevDateObj = new Date(selDateObj);
-  prevDateObj.setDate(selDateObj.getDate() - 1);
-  const prevDateStr = Utilities.formatDate(prevDateObj, Session.getScriptTimeZone(), "yyyy-MM-dd");
-
   schedData.forEach(row => {
-    let agent = String(row[0]).trim(); // TRIM FIX
+    let agent = String(row[0]).trim();
     let sDate = formatDate(row[1]);
     let act = row[2];
     
+    // Skip non-productive codes
     if (EXCLUSIONS.some(ex => act.includes(ex))) return;
 
-    let sStart = timeToBucketIndex(row[3]);
-    let sEnd = timeToBucketIndex(row[4]);
-    let isOvernight = sEnd < sStart;
-    
-    // Determine working segment for SELECTED DATE
-    let segStart = -1, segEnd = -1;
+    if (sDate === selDateStr && furloughMap[agent]) {
+      let sStart = timeToBucketIndex(row[3]);
+      let sEnd = timeToBucketIndex(row[4]);
+      if (sEnd < sStart) sEnd = 96; // Cap overnight for single-day view
 
-    if (sDate === selectedDate) {
-      segStart = sStart;
-      segEnd = isOvernight ? 96 : sEnd; 
-    } else if (sDate === prevDateStr && isOvernight) {
-      segStart = 0;
-      segEnd = sEnd;
-    }
-
-    // Intersection Calculation
-    if (segStart > -1 && segEnd > -1 && furloughMap[agent]) {
       furloughMap[agent].forEach(f => {
-        let overlapStart = Math.max(segStart, f.start);
-        let overlapEnd = Math.min(segEnd, f.end);
-        let overlap = overlapEnd - overlapStart;
+        let overlapStart = Math.max(sStart, f.start);
+        let overlapEnd = Math.min(sEnd, f.end);
         
-        if (overlap > 0) {
-          f.intervalsSaved += overlap;
-          // Reduce Supply Grid
+        if (overlapEnd > overlapStart) {
+          f.intervalsSaved += (overlapEnd - overlapStart);
+          // Reduce Supply in Grid
           for (let i = overlapStart; i < overlapEnd; i++) {
-            if (buckets[i].supply > 0) buckets[i].supply -= 1;
+            buckets[i].supply = Math.max(0, buckets[i].supply - 1);
           }
         }
       });
     }
   });
 
-  // 7. Net Calculation
+  // --- 4. CALCULATE NET ---
   buckets.forEach(b => {
     b.net = parseFloat((b.supply - b.demand).toFixed(2));
   });
 
-  // 8. Prepare Log
+  // --- 5. LOG PREP ---
   let logData = [];
   let totalHoursDay = 0;
-  
   Object.keys(furloughMap).forEach(agent => {
     furloughMap[agent].forEach(f => {
       let hours = (f.intervalsSaved * 15) / 60;
-      totalHoursDay += hours;
-      logData.push({
-        id: f.id,
-        agent: agent,
-        time: `${f.startTimeStr} - ${f.endTimeStr}`,
-        rotation: f.rotation,
-        hours: parseFloat(hours.toFixed(2))
-      });
+      if (hours > 0) {
+        totalHoursDay += hours;
+        logData.push({
+          id: f.id,
+          agent: agent,
+          time: `${f.startTimeStr} - ${f.endTimeStr}`,
+          rotation: f.rotation,
+          hours: parseFloat(hours.toFixed(2))
+        });
+      }
     });
   });
 
@@ -165,7 +151,7 @@ function getHeatmapData(selectedDate) {
   };
 }
 
-// --- API 2: SUBMIT FURLOUGH ---
+// --- UTILS ---
 function submitFurlough(agentName, dateStr, startTimeStr, endTimeStr) {
   const lock = LockService.getScriptLock();
   try {
@@ -178,7 +164,6 @@ function submitFurlough(agentName, dateStr, startTimeStr, endTimeStr) {
     }
     const rot = PropertiesService.getScriptProperties().getProperty('CURRENT_ROTATION') || 'Week A';
     
-    // Trim agent name to ensure matches
     sheet.appendRow([
       new Date().getTime(), 
       agentName.trim(), 
@@ -196,7 +181,6 @@ function submitFurlough(agentName, dateStr, startTimeStr, endTimeStr) {
   }
 }
 
-// --- UTILS ---
 function formatDate(d) {
   if (!d) return "";
   if (typeof d === 'string' && d.match(/^\d{4}-\d{2}-\d{2}$/)) return d;
@@ -227,32 +211,39 @@ function indexToTime(i) {
 }
 function setRotation(r) { PropertiesService.getScriptProperties().setProperty('CURRENT_ROTATION', r); }
 function importRawData(s, i) { return ImportHandler.processPaste(s, i); }
+
+// Fetch agents for the Modal
 function getBucketDetails(d, i) { 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const dbSched = ss.getSheetByName('DB_SCHEDULE');
   if (!dbSched) return { time: indexToTime(i), agents: [] };
+  
   const sched = dbSched.getDataRange().getValues(); sched.shift();
   let agents = [];
-  const selDateObj = new Date(d.replace(/-/g, '/'));
-  const prevDateObj = new Date(selDateObj); prevDateObj.setDate(selDateObj.getDate()-1);
-  const prevDateStr = Utilities.formatDate(prevDateObj, Session.getScriptTimeZone(), "yyyy-MM-dd");
   const EXCLUSIONS = ['Break', 'Lunch', 'Off', 'Solicited', 'Sick', 'Maladie'];
-
+  
   sched.forEach(row => {
     let act = row[2];
     if (EXCLUSIONS.some(ex => act.includes(ex))) return;
+    
     let sDate = formatDate(row[1]);
     let start = timeToBucketIndex(row[3]);
     let end = timeToBucketIndex(row[4]);
-    let overnight = end < start;
     let isActive = false;
+    
     if (sDate === d) {
-      let actualEnd = overnight ? 96 : end;
-      if (i >= start && i < actualEnd) isActive = true;
-    } else if (sDate === prevDateStr && overnight) {
-      if (i >= 0 && i < end) isActive = true;
+       let actualEnd = (end < start) ? 96 : end;
+       if (i >= start && i < actualEnd) isActive = true;
     }
-    if (isActive) agents.push({ name: row[0], activity: act, shiftStart: formatTime(row[3]), shiftEnd: formatTime(row[4]) });
+    
+    if (isActive) {
+      agents.push({ 
+        name: row[0], 
+        activity: act, 
+        shiftStart: formatTime(row[3]), 
+        shiftEnd: formatTime(row[4]) 
+      });
+    }
   });
   return { time: indexToTime(i), agents: agents };
 }
