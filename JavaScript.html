@@ -4,7 +4,6 @@ const app = {
   
   init: function() {
     const t = new Date();
-    // Format YYYY-MM-DD local time
     const local = new Date(t.getTime() - (t.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
     document.getElementById('datePicker').value = local;
     app.load();
@@ -13,7 +12,6 @@ const app = {
   load: function() {
     this.selectedDate = document.getElementById('datePicker').value;
     if(!this.selectedDate) return;
-    
     ui.showLoader(true);
     google.script.run
       .withSuccessHandler(this.renderHeatmap)
@@ -23,11 +21,8 @@ const app = {
 
   renderHeatmap: function(data) {
     ui.showLoader(false);
-    
-    // 1. Sync Rotation UI
     if(data.rotation) document.getElementById('rotPicker').value = data.rotation;
     
-    // 2. Render Grid
     const grid = document.getElementById('heatmapGrid');
     grid.innerHTML = '';
     
@@ -38,36 +33,56 @@ const app = {
       if(b.net > maxS) maxS = b.net;
       if(b.net < maxR) maxR = b.net;
 
-      // DOM
+      // Color Logic (Requested)
+      // > 3 : Green (Surplus)
+      // <= 0 : Red (Risk)
+      // 1 to 3 : Grey/Orange (Neutral)
+      let cls = 'bg-neu'; // Default 1-3
+      if(b.net > 3) cls = 'bg-pos';
+      if(b.net <= 0) cls = 'bg-neg';
+      
       const d = document.createElement('div');
-      let cls = 'bg-neu';
-      if(b.net > 0) cls = 'bg-pos';
-      if(b.net < 0) cls = 'bg-neg';
-      
       d.className = `cell ${cls}`;
+      d.style.animationDelay = `${i * 0.01}s`; // Staggered Animation
       d.onclick = () => app.openSlot(b.index);
-      d.innerHTML = `<span class="c-time">${b.label}</span><span class="c-val">${b.net>0?'+':''}${b.net}</span>`;
-      
+      d.innerHTML = `<span class="c-time">${b.label}</span><span class="c-val">${b.net > 0 ? '+'+b.net : b.net}</span>`;
       grid.appendChild(d);
     });
 
-    // 3. Update KPIs
+    // Update KPI
     document.getElementById('kpi-surplus').innerText = '+' + maxS;
     document.getElementById('kpi-risk').innerText = maxR;
+    
+    // Update Colors for KPI Text
+    document.getElementById('kpi-surplus').className = `kpi-val val-pos`;
+    document.getElementById('kpi-risk').className = `kpi-val val-neg`;
 
-    // 4. Update Log
+    // Render Log
     const list = document.getElementById('furloughList');
     list.innerHTML = '';
+    
     if (data.furloughs.length === 0) {
-      list.innerHTML = '<li style="justify-content:center; color:#aaa;">No furloughs today</li>';
+      list.innerHTML = '<li style="justify-content:center; color:#9ca3af; padding:20px;">No furloughs today</li>';
     } else {
-      data.furloughs.forEach(f => {
-        list.innerHTML += `
-          <li>
-            <span>${f.agent}</span> 
-            <span>${f.time} <span class="badge">${f.rotation}</span></span>
-          </li>`;
+      data.furloughs.forEach((f, idx) => {
+        const li = document.createElement('li');
+        li.style.animationDelay = `${idx * 0.05}s`;
+        li.innerHTML = `
+          <div>
+            <span style="font-weight:600; color:#1f2937;">${f.agent}</span>
+            <div style="font-size:0.75rem; color:#6b7280; margin-top:2px;">
+              ${f.time} <span style="background:#f3f4f6; padding:1px 4px; border-radius:4px;">${f.rotation}</span>
+            </div>
+          </div>
+          <span class="hours-tag">-${f.hours}h</span>
+        `;
+        list.appendChild(li);
       });
+    }
+    
+    // Update Stats Footer
+    if(data.totals) {
+      document.getElementById('stat-day').innerText = data.totals.day + 'h';
     }
   },
 
@@ -78,50 +93,26 @@ const app = {
       .getBucketDetails(this.selectedDate, idx);
   },
   
-  submitFurlough: function(agentName, time) {
-    if(!confirm(`Grant Early Release to ${agentName} starting at ${time}?`)) return;
+  submitFurlough: function(agentName, startId, endId) {
+    const sVal = document.getElementById(startId).value;
+    const eVal = document.getElementById(endId).value;
+    
+    if(!sVal || !eVal) return alert("Please enter both Start and End times.");
+    if(!confirm(`Furlough ${agentName} from ${sVal} to ${eVal}?`)) return;
     
     ui.showLoader(true);
     google.script.run
       .withSuccessHandler((res) => {
         if(res !== "Success") alert(res);
         ui.closeModals();
-        app.load(); // Refresh to show impact
+        app.load();
       })
-      .submitFurlough(agentName, this.selectedDate, time);
+      .submitFurlough(agentName, this.selectedDate, sVal, eVal);
   },
 
   setRotation: function() {
     const val = document.getElementById('rotPicker').value;
     google.script.run.setRotation(val);
-  },
-
-  showStats: function() {
-    ui.showLoader(true);
-    google.script.run.withSuccessHandler(stats => {
-       ui.showLoader(false);
-       alert(`
-         Report Summary:
-         Total Furloughs: ${stats.total}
-         
-         By Rotation:
-         Week A: ${stats.byRot['Week A'] || 0}
-         Week B: ${stats.byRot['Week B'] || 0}
-         
-         This Week: ${stats.thisWeek}
-         This Month: ${stats.thisMonth}
-       `);
-    }).getStatsReport();
-  },
-
-  archive: function() {
-    if(!confirm("Archive data older than 30 days to Drive?")) return;
-    ui.showLoader(true);
-    google.script.run.withSuccessHandler(msg => {
-      ui.showLoader(false);
-      alert(msg);
-      app.load();
-    }).archiveOldData();
   },
 
   runImport: function() {
@@ -147,32 +138,6 @@ const ui = {
     document.getElementById('modalImport').style.display='block';
   },
   
-  showSlotModal: (data) => {
-    ui.showLoader(false);
-    document.getElementById('slotTitle').innerText = `${data.time} - Staffing Details`;
-    
-    const tbody = document.getElementById('agentList');
-    tbody.innerHTML = '';
-    
-    if(data.agents.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#aaa;">No agents scheduled</td></tr>';
-    } else {
-      data.agents.forEach(a => {
-         const tr = document.createElement('tr');
-         tr.innerHTML = `
-           <td>${a.name}</td>
-           <td>${a.activity}</td>
-           <td>${a.shiftStart} - ${a.shiftEnd}</td>
-           <td><button class="btn-sm" onclick="app.submitFurlough('${a.name}', '${data.time}')">Early Release</button></td>
-         `;
-         tbody.appendChild(tr);
-      });
-    }
-
-    document.getElementById('overlay').style.display='block';
-    document.getElementById('modalSlot').style.display='block';
-  },
-
   closeModals: () => {
     document.querySelectorAll('.modal').forEach(m => m.style.display='none');
     document.getElementById('overlay').style.display='none';
@@ -185,6 +150,41 @@ const ui = {
   handleError: (e) => {
     ui.showLoader(false);
     alert('Error: ' + e.message);
+  },
+  
+  showSlotModal: (data) => {
+    ui.showLoader(false);
+    document.getElementById('slotTitle').innerText = `${data.time} - Staffing Details`;
+    
+    const tbody = document.getElementById('agentList');
+    tbody.innerHTML = '';
+    
+    if(data.agents.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#9ca3af; padding:20px;">No agents scheduled</td></tr>';
+    } else {
+      data.agents.forEach((a, i) => {
+         const tr = document.createElement('tr');
+         const sId = `start_${i}`;
+         const eId = `end_${i}`;
+         
+         tr.innerHTML = `
+           <td style="font-weight:500;">${a.name}</td>
+           <td style="color:#6b7280;">${a.shiftStart} - ${a.shiftEnd}</td>
+           <td style="display:flex; gap:8px; align-items:center;">
+             <input type="time" id="${sId}" value="${data.time}">
+             <span style="color:#9ca3af;">➝</span>
+             <input type="time" id="${eId}" value="${a.shiftEnd}">
+           </td>
+           <td style="text-align:right;">
+             <button class="btn-sm" onclick="app.submitFurlough('${a.name}', '${sId}', '${eId}')">Save</button>
+           </td>
+         `;
+         tbody.appendChild(tr);
+      });
+    }
+
+    document.getElementById('overlay').style.display='block';
+    document.getElementById('modalSlot').style.display='block';
   }
 };
 
