@@ -9,18 +9,15 @@
 <div class="app">
   <header>
     <div class="brand">
-      <h1>WFM Command Center</h1>
+      <h1>Furlough Tracker</h1>
     </div>
     <div class="actions">
       <select id="rotPicker" onchange="app.setRotation()">
         <option value="Week A">Week A</option>
         <option value="Week B">Week B</option>
       </select>
-      
-      <div style="width:1px; height:20px; background:rgba(255,255,255,0.2); margin:0 5px;"></div>
-      
+      <div style="width:1px; height:20px; background:#e5e7eb; margin:0 5px;"></div>
       <button class="btn-sec" onclick="ui.openImport()">Feed Data</button>
-      <button class="btn-sec" onclick="app.showStats()">Reports</button>
       <input type="date" id="datePicker" onchange="app.load()">
       <button class="btn-pri" onclick="app.load()">Refresh</button>
     </div>
@@ -31,22 +28,22 @@
       <div class="card-head">
         <h2>Intraday Net Staffing</h2>
         <div class="legend">
-          <span class="dot pos"></span> Surplus
-          <span class="dot neg"></span> Risk
+          <div style="display:flex;align-items:center;"><span class="dot" style="background:#10b981;"></span> Surplus (>3)</div>
+          <div style="display:flex;align-items:center;"><span class="dot" style="background:#f97316;"></span> Neutral (1-3)</div>
+          <div style="display:flex;align-items:center;"><span class="dot" style="background:#ef4444;"></span> Risk (<=0)</div>
         </div>
       </div>
-      <div id="heatmapGrid" class="grid">
-        </div>
+      <div id="heatmapGrid" class="grid"></div>
     </section>
 
     <aside class="sidebar">
       <div class="kpi-row">
         <div class="card kpi-box">
-          <div class="kpi-val pos" id="kpi-surplus">--</div>
+          <div class="kpi-val" id="kpi-surplus">--</div>
           <small>Max Surplus</small>
         </div>
         <div class="card kpi-box">
-          <div class="kpi-val neg" id="kpi-risk">--</div>
+          <div class="kpi-val" id="kpi-risk">--</div>
           <small>Max Risk</small>
         </div>
       </div>
@@ -54,49 +51,61 @@
       <div class="card log-box">
         <div class="card-head">
            <h3>Furlough Log</h3>
-           <button class="btn-sm" style="background:transparent; border:1px solid #ffffff30; color:white;" onclick="app.archive()">Archive</button>
         </div>
         <ul id="furloughList" class="log-list">
-          <li style="justify-content:center; color:#ffffff50;">Loading...</li>
+          <li style="text-align:center; padding:20px; color:#aaa;">Loading...</li>
         </ul>
+        <div style="padding:15px; border-top:1px solid #e5e7eb; background:#f9fafb;">
+           <div style="display:flex; justify-content:space-between; font-size:0.85rem;">
+             <span style="color:#6b7280;">Hours Saved (Day)</span>
+             <span style="font-weight:700; color:#111827;" id="stat-day">--</span>
+           </div>
+        </div>
       </div>
     </aside>
   </main>
 </div>
 
-<div id="modalImport" class="modal">
-  <div class="modal-content">
-    <h2>Feed Data</h2>
-    <p style="font-size:0.9rem; color:#aaa;">Paste content from your CSV exports.</p>
-    
-    <label>Schedule Data:</label>
+<div id="modalImport" class="modal" style="width: 500px;">
+  <div class="modal-header">
+    <h2 style="margin:0; font-size:1.2rem;">Feed Data</h2>
+    <button class="close-btn" onclick="ui.closeModals()">&times;</button>
+  </div>
+  <div class="modal-body">
+    <p style="font-size:0.85rem; color:#6b7280; margin-bottom:15px;">Paste CSV content below.</p>
+    <label style="display:block; margin-bottom:5px; font-weight:500; font-size:0.9rem;">Schedule Data</label>
     <textarea id="txtSched" placeholder="Paste Schedule CSV..."></textarea>
     
-    <label style="margin-top:10px; display:block;">IDP/Requirements Data:</label>
+    <label style="display:block; margin-top:15px; margin-bottom:5px; font-weight:500; font-size:0.9rem;">IDP Data</label>
     <textarea id="txtIDP" placeholder="Paste IDP CSV..."></textarea>
     
     <div style="margin-top:20px; text-align:right;">
-      <button onclick="ui.closeModals()">Cancel</button>
-      <button class="btn-pri" onclick="app.runImport()">Process</button>
+      <button onclick="ui.closeModals()" class="btn-sm" style="margin-right:10px;">Cancel</button>
+      <button onclick="app.runImport()" class="btn-pri" style="padding:8px 16px; border-radius:6px;">Process</button>
     </div>
   </div>
 </div>
 
-<div id="modalSlot" class="modal" style="width: 600px;">
-  <div style="display:flex; justify-content:space-between; margin-bottom:15px;">
-    <h2 id="slotTitle">Details</h2>
-    <button onclick="ui.closeModals()" style="background:none; border:none; color:white; font-size:1.5rem;">&times;</button>
+<div id="modalSlot" class="modal" style="width: 700px;">
+  <div class="modal-header">
+    <h2 id="slotTitle" style="margin:0; font-size:1.2rem;">Details</h2>
+    <button class="close-btn" onclick="ui.closeModals()">&times;</button>
   </div>
-  <div style="max-height:400px; overflow-y:auto;">
+  <div class="modal-body">
     <table class="agent-table">
-      <thead><tr><th>Agent</th><th>Activity</th><th>Shift</th><th>Action</th></tr></thead>
+      <thead><tr>
+        <th>Agent</th>
+        <th>Shift</th>
+        <th>Furlough Range</th>
+        <th style="text-align:right;">Action</th>
+      </tr></thead>
       <tbody id="agentList"></tbody>
     </table>
   </div>
 </div>
 
 <div id="overlay" class="overlay" onclick="ui.closeModals()"></div>
-<div id="loader" class="loader"><div class="spinner"></div><span>Processing...</span></div>
+<div id="loader" class="loader"><div class="spinner"></div></div>
 
 <?!= include('JavaScript'); ?>
 </body>
