@@ -4,7 +4,6 @@ var ImportHandler = {
     ['DB_SCHEDULE', 'DB_IDP', 'DB_FURLOUGH'].forEach(n => {
        if(!ss.getSheetByName(n)) ss.insertSheet(n);
     });
-
     let msg = [];
 
     // --- 1. SCHEDULE PARSER ---
@@ -13,7 +12,8 @@ var ImportHandler = {
       const lines = schedRaw.split(/\r?\n/).filter(l => l.trim().length > 0);
       let currentAgent = "", currentDate = "";
       
-      // Matches: Activity Name (with noise) + Time + Time
+      // Matches: Activity Name (chars/spaces) + Time + Time
+      // Updated to handle slashes in "ACSU Libération volontaire / Solicited Time Off"
       const segmentRegex = /([a-zA-ZÀ-ÿ0-9\/\(\)\s\-\.&]+?)\s+(\d{1,2}:\d{2}(?:\s?[AP]M)?)\s+(\d{1,2}:\d{2}(?:\s?[AP]M)?)\s*$/i;
       const dateRegex = /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/;
 
@@ -27,7 +27,7 @@ var ImportHandler = {
           if (parts.length > 1) currentAgent = parts[1].replace(/^\s*\d+\s+/, '').trim();
           return;
         } 
-        // B. CSV-style Agent (If pasting rows like "Name",Date...)
+        // B. CSV-style Agent
         else if (text.includes('"') && text.includes(',')) {
           let csvParts = parseCSVLine(text);
           if (csvParts.length >= 5) {
@@ -46,10 +46,9 @@ var ImportHandler = {
           let segMatch = text.match(segmentRegex);
           if (segMatch) {
             let rawAct = segMatch[1].trim();
-            // Clean "00 PM" noise specifically seen in your file
             let act = cleanActivity(rawAct);
-            
-            if (!act.toLowerCase().includes('activity') && !act.toLowerCase().includes('scheduled')) {
+            // Robust check to avoid headers but keep valid activities
+            if (!act.toLowerCase().match(/^activity|^scheduled/)) {
                cleanSched.push([currentAgent, currentDate, act, segMatch[2].trim(), segMatch[3].trim()]);
             }
           }
@@ -69,8 +68,6 @@ var ImportHandler = {
     if (idpRaw && idpRaw.trim().length > 0) {
       let cleanIDP = [];
       const lines = idpRaw.split(/\r?\n/).filter(l => l.trim().length > 0);
-      
-      // Look for the header row with "Requirements" and "Open"
       let headerIdx = -1;
       for (let i = 0; i < lines.length; i++) {
         if (lines[i].includes('Requirements') && lines[i].includes('Open')) {
@@ -85,31 +82,27 @@ var ImportHandler = {
 
         headers.forEach((h, i) => {
           let lower = h.toLowerCase();
-          // Extract Date from string like "Requirements Friday, February 6, 2026"
           let dateMatch = h.match(/(\w+\s\d{1,2},\s\d{4})/);
           if (dateMatch) {
             let dateStr = parseDate(dateMatch[1]);
-            // Map columns
             if (lower.includes('req')) colMap[i] = { date: dateStr, type: 'req' };
             else if (lower.includes('open') && !lower.includes('+/-')) colMap[i] = { date: dateStr, type: 'open' };
           }
         });
 
-        // Parse Data Rows
         let dataByDay = {};
         for (let i = headerIdx + 1; i < lines.length; i++) {
           let cols = parseCSVLine(lines[i]);
-          let timeStr = cols[0]; // Interval (e.g. 00:00:00) is Col 0
+          let timeStr = cols[0]; 
           
           if (timeStr && timeStr.includes(':')) {
             let tNorm = formatTimeStr(timeStr);
-            
             Object.keys(colMap).forEach(idx => {
                if (cols[idx]) {
                  let info = colMap[idx];
                  if (!dataByDay[info.date]) dataByDay[info.date] = {};
                  if (!dataByDay[info.date][tNorm]) dataByDay[info.date][tNorm] = { req:0, open:0 };
-                 
+                
                  let val = parseFloat(cols[idx]);
                  if (isNaN(val)) val = 0;
                  if (info.type === 'req') dataByDay[info.date][tNorm].req = val;
@@ -119,7 +112,6 @@ var ImportHandler = {
           }
         }
         
-        // Flatten
         Object.keys(dataByDay).forEach(day => {
           Object.keys(dataByDay[day]).forEach(time => {
             cleanIDP.push([day, time, dataByDay[day][time].req, dataByDay[day][time].open]);
@@ -156,7 +148,6 @@ function cleanActivity(s) {
   // Removes "00 PM" artifacts from strings
   return s.replace(/\d{2}\s?[AP]M/gi, '').trim();
 }
-// Robust CSV line parser handles quotes
 function parseCSVLine(text) {
   let ret = [];
   let inQuote = false;
