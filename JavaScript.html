@@ -1,141 +1,139 @@
-<style>
-/* --- THEME VARIABLES --- */
-:root {
-    /* Dark Theme Default */
-    --bg-main: #000000;
-    --bg-grid: radial-gradient(circle at 50% 0%, #1c1c1e 0%, #000000 80%);
-    --glass-panel: rgba(28, 28, 30, 0.75);
-    --glass-border: rgba(255, 255, 255, 0.12);
-    --text-primary: #FFFFFF;
-    --text-secondary: rgba(235, 235, 245, 0.6);
-    --accent: #0A84FF;
-    --accent-glow: rgba(10, 132, 255, 0.3);
-    --success: #32D74B;
-    --warning: #FFD60A;
-    --danger: #FF453A;
-    --input-bg: rgba(0, 0, 0, 0.3);
-    --item-hover: rgba(255, 255, 255, 0.08);
-}
+<script>
+const app = {
+  
+  init: function() {
+    const t = new Date();
+    const local = new Date(t.getTime() - (t.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+    document.getElementById('datePicker').value = local;
+    app.load();
+  },
 
-[data-theme="light"] {
-    --bg-main: #F2F2F7;
-    --bg-grid: radial-gradient(circle at 50% 0%, #FFFFFF 0%, #F2F2F7 80%);
-    --glass-panel: rgba(255, 255, 255, 0.85);
-    --glass-border: rgba(0, 0, 0, 0.1);
-    --text-primary: #000000;
-    --text-secondary: rgba(60, 60, 67, 0.6);
-    --accent: #007AFF;
-    --accent-glow: rgba(0, 122, 255, 0.2);
-    --success: #34C759;
-    --warning: #FFCC00;
-    --danger: #FF3B30;
-    --input-bg: rgba(118, 118, 128, 0.12);
-    --item-hover: rgba(0, 0, 0, 0.05);
-}
+  load: function() {
+    const date = document.getElementById('datePicker').value;
+    const mode = document.getElementById('viewPicker').value;
+    if(!date) return;
+    
+    ui.showLoader(true);
+    google.script.run
+      .withSuccessHandler(this.renderDashboard)
+      .withFailureHandler(ui.handleError)
+      .getAnalyticsData(mode, date);
+  },
 
-body {
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Roboto, Helvetica, Arial, sans-serif;
-    background: var(--bg-main);
-    color: var(--text-primary);
-    min-height: 100vh;
-    margin: 0;
-    overflow: hidden;
-    transition: background 0.3s;
-}
+  renderDashboard: function(data) {
+    ui.showLoader(false);
+    
+    // 1. HEADER & META
+    document.getElementById('gridTitle').innerText = data.label;
+    document.getElementById('gridSub').innerText = data.mode === 'day' ? "Intraday Intervals" : "Aggregated View";
+    
+    // 2. TOGGLE GRID vs RANGE VIEW
+    const grid = document.getElementById('heatmapGrid');
+    const ph = document.getElementById('rangePlaceholder');
+    const legend = document.getElementById('gridLegend');
+    
+    grid.innerHTML = '';
+    
+    if (data.mode === 'day') {
+       grid.classList.remove('hidden');
+       ph.classList.add('hidden');
+       legend.classList.remove('hidden');
+       
+       data.grid.forEach((b, i) => {
+          let cls = 'status-neutral'; 
+          if(b.net > 3) cls = 'status-surplus';
+          if(b.net <= 0) cls = 'status-risk';
+          
+          const d = document.createElement('div');
+          d.className = `heatmap-cell h-[60px] animate-enter ${cls}`;
+          d.style.animationDelay = `${i * 0.005}s`;
+          d.innerHTML = `
+            <span class="text-[10px] opacity-60 mb-0.5 font-medium">${b.label}</span>
+            <span class="text-sm font-bold font-sf">${b.net > 0 ? '+'+b.net : b.net}</span>
+          `;
+          grid.appendChild(d);
+       });
+    } else {
+       grid.classList.add('hidden');
+       ph.classList.remove('hidden');
+       legend.classList.add('hidden');
+    }
 
-/* --- GLASS LAYOUT --- */
-.grid-bg { position: fixed; inset: 0; z-index: -1; background: var(--bg-grid); }
+    // 3. UPDATE CALCULATOR (KPIs)
+    document.getElementById('stat-total').innerText = data.totals.all.toFixed(2) + 'h';
+    document.getElementById('stat-count').innerText = data.totals.count;
+    document.getElementById('stat-morning').innerText = data.totals.morning.toFixed(2) + 'h';
+    document.getElementById('stat-evening').innerText = data.totals.evening.toFixed(2) + 'h';
+    document.getElementById('stat-night').innerText = data.totals.night.toFixed(2) + 'h';
 
-.glass-header {
-    background: var(--glass-panel);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
-    border-bottom: 1px solid var(--glass-border);
-}
+    // 4. RENDER ACTIVITY LOG
+    const list = document.getElementById('activityList');
+    list.innerHTML = '';
+    
+    if (data.furloughs.length === 0) {
+      list.innerHTML = `<div class="flex flex-col items-center justify-center h-40 text-sec"><span class="material-symbols-outlined text-4xl mb-2 opacity-20">history_toggle_off</span><p class="text-sm">No activity found</p></div>`;
+    } else {
+      data.furloughs.forEach((f, idx) => {
+        const div = document.createElement('div');
+        div.className = 'flex gap-3 p-3 rounded-xl bg-[var(--item-hover)] border border-[var(--glass-border)] animate-enter';
+        div.style.animationDelay = `${idx * 0.03}s`;
+        
+        let badgeColor = "bg-slate-500/10 text-slate-400";
+        if(f.shift === 'Morning') badgeColor = "bg-yellow-500/10 text-yellow-500";
+        if(f.shift === 'Evening') badgeColor = "bg-orange-500/10 text-orange-500";
+        if(f.shift === 'Night') badgeColor = "bg-indigo-500/10 text-indigo-500";
 
-.glass-panel {
-    background: var(--glass-panel);
-    backdrop-filter: blur(30px) saturate(180%);
-    -webkit-backdrop-filter: blur(30px) saturate(180%);
-    border: 1px solid var(--glass-border);
-    box-shadow: 0 4px 24px rgba(0,0,0,0.1);
-}
+        div.innerHTML = `
+          <div class="w-8 h-8 rounded-full bg-[var(--glass-panel)] flex items-center justify-center flex-shrink-0 border border-[var(--glass-border)]">
+             <span class="material-symbols-outlined text-[16px] text-sec">person</span>
+          </div>
+          <div class="flex-1 min-w-0">
+             <div class="flex justify-between items-start mb-1">
+                <p class="text-sm font-medium truncate pr-2">${f.agent}</p>
+                <span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${badgeColor}">${f.shift}</span>
+             </div>
+             <div class="flex justify-between items-end">
+                <div class="flex flex-col">
+                   <span class="text-[10px] text-sec">${f.date}</span>
+                   <span class="text-xs font-mono opacity-80">${f.time}</span>
+                </div>
+                <p class="text-sm text-[#0A84FF] font-bold font-sf">${f.hours}h</p>
+             </div>
+          </div>
+        `;
+        list.appendChild(div);
+      });
+    }
+  },
 
-/* --- UI COMPONENTS --- */
-.control-input {
-    background: var(--input-bg);
-    border: 1px solid var(--glass-border);
-    color: var(--text-primary);
-    border-radius: 8px;
-    transition: all 0.2s;
-    font-size: 13px;
-    height: 36px;
-    padding: 0 12px;
-}
-.control-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+  runImport: function() {
+    const s = document.getElementById('txtSched').value;
+    const i = document.getElementById('txtIDP').value;
+    ui.showLoader(true);
+    google.script.run
+      .withSuccessHandler(res => {
+        alert(res);
+        ui.closeModals();
+        ui.showLoader(false);
+        app.load();
+      })
+      .withFailureHandler(ui.handleError)
+      .importRawData(s, i);
+  }
+};
 
-.btn-glass {
-    background: var(--input-bg);
-    border: 1px solid var(--glass-border);
-    color: var(--text-primary);
-    border-radius: 8px;
-    padding: 0 16px;
-    height: 36px;
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-    display: flex; align-items: center; gap: 8px;
-}
-.btn-glass:hover { background: var(--item-hover); }
+const ui = {
+  toggleTheme: () => {
+    const html = document.documentElement;
+    const isDark = !html.getAttribute('data-theme');
+    if(isDark) html.setAttribute('data-theme', 'light');
+    else html.removeAttribute('data-theme');
+  },
+  openImport: () => document.getElementById('modalImport').classList.remove('hidden'),
+  closeModals: () => document.querySelectorAll('[id^="modal"]').forEach(m => m.classList.add('hidden')),
+  showLoader: (v) => document.getElementById('loader').classList.toggle('hidden', !v),
+  handleError: (e) => { ui.showLoader(false); alert('Error: ' + e.message); }
+};
 
-.btn-primary {
-    background: var(--accent);
-    color: white;
-    border: none;
-    box-shadow: 0 2px 10px var(--accent-glow);
-}
-.btn-primary:hover { filter: brightness(1.1); }
-
-/* --- CALCULATOR / KPI CARDS --- */
-.kpi-card {
-    background: var(--glass-panel);
-    border: 1px solid var(--glass-border);
-    border-radius: 16px;
-    padding: 20px;
-    position: relative;
-    overflow: hidden;
-}
-.kpi-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary); margin-bottom: 4px; font-weight: 600; }
-.kpi-value { font-size: 32px; font-weight: 700; color: var(--text-primary); letter-spacing: -0.5px; }
-
-/* --- HEATMAP GRID --- */
-.heatmap-cell {
-    border-radius: 8px;
-    transition: transform 0.2s, box-shadow 0.2s;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    cursor: pointer;
-}
-.heatmap-cell:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
-.status-surplus { background: rgba(50, 215, 75, 0.15); color: var(--success); border: 1px solid rgba(50, 215, 75, 0.2); }
-.status-risk { background: rgba(255, 69, 58, 0.15); color: var(--danger); border: 1px solid rgba(255, 69, 58, 0.2); }
-.status-neutral { background: var(--item-hover); color: var(--text-secondary); border: 1px solid var(--glass-border); }
-
-/* --- ANIMATIONS --- */
-@keyframes slideUp {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-.animate-enter { animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; opacity: 0; }
-
-/* --- SCROLLBAR --- */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--glass-border); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
-
-/* --- UTILS --- */
-.font-sf { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif; }
-.icon-sm { font-size: 18px !important; }
-.text-sec { color: var(--text-secondary); }
-</style>
+window.onload = app.init;
+</script>
