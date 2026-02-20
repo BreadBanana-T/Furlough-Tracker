@@ -23,11 +23,9 @@ const app = {
   renderDashboard: function(data) {
     ui.showLoader(false);
     
-    // 1. HEADER & META
     document.getElementById('gridTitle').innerText = data.label;
     document.getElementById('gridSub').innerText = data.mode === 'day' ? "Intraday Intervals" : "Aggregated View";
     
-    // 2. TOGGLE GRID vs RANGE VIEW
     const grid = document.getElementById('heatmapGrid');
     const ph = document.getElementById('rangePlaceholder');
     const legend = document.getElementById('gridLegend');
@@ -47,6 +45,9 @@ const app = {
           const d = document.createElement('div');
           d.className = `heatmap-cell h-[60px] animate-enter ${cls}`;
           d.style.animationDelay = `${i * 0.005}s`;
+          // ADDED CLICK EVENT HERE
+          d.setAttribute('onclick', `app.openBucket(${b.index})`);
+          
           d.innerHTML = `
             <span class="text-[10px] opacity-60 mb-0.5 font-medium">${b.label}</span>
             <span class="text-sm font-bold font-sf">${b.net > 0 ? '+'+b.net : b.net}</span>
@@ -59,14 +60,12 @@ const app = {
        legend.classList.add('hidden');
     }
 
-    // 3. UPDATE CALCULATOR (KPIs)
     document.getElementById('stat-total').innerText = data.totals.all.toFixed(2) + 'h';
     document.getElementById('stat-count').innerText = data.totals.count;
     document.getElementById('stat-morning').innerText = data.totals.morning.toFixed(2) + 'h';
     document.getElementById('stat-evening').innerText = data.totals.evening.toFixed(2) + 'h';
     document.getElementById('stat-night').innerText = data.totals.night.toFixed(2) + 'h';
 
-    // 4. RENDER ACTIVITY LOG
     const list = document.getElementById('activityList');
     list.innerHTML = '';
     
@@ -104,6 +103,73 @@ const app = {
         list.appendChild(div);
       });
     }
+  },
+
+  // NEW: OPEN BUCKET / FURLOUGH MODAL LOGIC
+  openBucket: function(idx) {
+    const date = document.getElementById('datePicker').value;
+    ui.showLoader(true);
+    
+    google.script.run
+      .withSuccessHandler(res => {
+         ui.showLoader(false);
+         document.getElementById('bucketTimeTitle').innerText = res.time;
+         
+         const list = document.getElementById('bucketAgentList');
+         const select = document.getElementById('furloughAgent');
+         list.innerHTML = '';
+         select.innerHTML = '<option value="">Select Agent...</option>';
+
+         if(res.agents.length === 0) {
+            list.innerHTML = '<p class="text-xs text-sec text-center py-4 italic">No productive agents on shift.</p>';
+         } else {
+            res.agents.forEach(a => {
+               // Populate Agent List
+               list.innerHTML += `<div class="flex justify-between items-center p-2 rounded bg-[var(--item-hover)]">
+                 <span class="text-sm font-medium text-primary truncate max-w-[150px]">${a.name}</span>
+                 <span class="text-[10px] text-sec">${a.activity} (${a.shiftStart} - ${a.shiftEnd})</span>
+               </div>`;
+               // Populate Dropdown
+               select.innerHTML += `<option value="${a.name}">${a.name}</option>`;
+            });
+         }
+         
+         // Auto-fill the start time to match the bucket clicked
+         const timeParts = res.time.split(':');
+         document.getElementById('furloughStart').value = `${timeParts[0].padStart(2, '0')}:${timeParts[1].padStart(2, '0')}`;
+         document.getElementById('furloughEnd').value = '';
+         
+         document.getElementById('modalBucket').classList.remove('hidden');
+      })
+      .withFailureHandler(ui.handleError)
+      .getBucketDetails(date, idx);
+  },
+
+  // NEW: SUBMIT FURLOUGH TO DB
+  submitFurlough: function() {
+    const agent = document.getElementById('furloughAgent').value;
+    const start = document.getElementById('furloughStart').value;
+    const end = document.getElementById('furloughEnd').value;
+    const date = document.getElementById('datePicker').value;
+
+    if(!agent || !start) {
+        alert("Agent and Start Time are required.");
+        return;
+    }
+
+    ui.showLoader(true);
+    google.script.run
+      .withSuccessHandler(res => {
+         ui.showLoader(false);
+         if(res.includes('Error')) {
+             alert(res);
+         } else {
+             ui.closeModals();
+             app.load(); // Refresh grid to deduct supply
+         }
+      })
+      .withFailureHandler(ui.handleError)
+      .submitFurlough(agent, date, start, end);
   },
 
   runImport: function() {
