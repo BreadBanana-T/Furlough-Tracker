@@ -146,7 +146,39 @@
       </div>
   </div>
 </div>
-
+<div id="modalBucket" class="fixed inset-0 z-[100] hidden">
+  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onclick="ui.closeModals()"></div>
+  <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] glass-panel bg-[var(--bg-main)] rounded-2xl p-6 shadow-2xl">
+      <div class="flex justify-between items-center mb-4">
+        <div>
+          <h3 class="text-lg font-bold font-sf" id="bucketTimeTitle">--:--</h3>
+          <p class="text-[10px] uppercase tracking-wide text-sec">Active Productive Agents</p>
+        </div>
+        <button onclick="ui.closeModals()" class="text-sec hover:text-primary"><span class="material-symbols-outlined">close</span></button>
+      </div>
+      
+      <div id="bucketAgentList" class="max-h-[200px] overflow-y-auto space-y-2 mb-4 border border-[var(--glass-border)] rounded-lg p-2 bg-[var(--input-bg)]">
+         </div>
+      
+      <div class="border-t border-[var(--glass-border)] pt-4 mt-2">
+         <h4 class="text-sm font-semibold mb-3">Grant Furlough</h4>
+         <select id="furloughAgent" class="w-full control-input mb-3 cursor-pointer">
+           <option value="">Select Agent...</option>
+         </select>
+         <div class="flex gap-2 mb-4">
+           <div class="flex-1">
+             <label class="text-[10px] text-sec uppercase pl-1">Start Time</label>
+             <input type="time" id="furloughStart" class="w-full control-input scheme-dark cursor-pointer mt-1">
+           </div>
+           <div class="flex-1">
+             <label class="text-[10px] text-sec uppercase pl-1">End Time (Opt)</label>
+             <input type="time" id="furloughEnd" class="w-full control-input scheme-dark cursor-pointer mt-1">
+           </div>
+         </div>
+         <button onclick="app.submitFurlough()" class="w-full btn-glass btn-primary justify-center font-bold">Approve Release</button>
+      </div>
+  </div>
+</div>
 <div id="loader" class="fixed inset-0 z-[200] bg-black/50 backdrop-blur-sm hidden flex items-center justify-center">
   <div class="w-10 h-10 border-4 border-blue-500/30 border-t-[#0A84FF] rounded-full animate-spin"></div>
 </div>
